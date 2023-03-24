@@ -22,7 +22,6 @@
 #include "metadata/Il2CppSignatureHash.h"
 #include "os/Atomic.h"
 #include "os/Mutex.h"
-#include "os/Path.h"
 #include "utils/CallOnce.h"
 #include "utils/Collections.h"
 #include "utils/HashUtils.h"
@@ -45,12 +44,6 @@
 #include "vm-utils/NativeSymbol.h"
 #include "vm-utils/VmStringUtils.h"
 
-#if __ENABLE_UNITY_PLUGIN__
-#if IL2CPP_TARGET_ANDROID || IL2CPP_TARGET_OSX
-#include <dlfcn.h>
-#endif
-#endif
-#define SHIELDCODE 0
 using namespace il2cpp;
 using namespace il2cpp::utils::collections;
 using namespace il2cpp::vm;
@@ -190,92 +183,12 @@ void MetadataCache::Register(const Il2CppCodeRegistration* const codeRegistratio
 static void* s_GlobalMetadata;
 static const Il2CppGlobalMetadataHeader* s_GlobalMetadataHeader;
 
-#if __ENABLE_UNITY_PLUGIN__
-def_query_call_back g_query_callback;
-def_il2cpp_get_global_metadata g_get_global_metadata;
-def_il2cpp_get_string g_get_string;
-
-bool MetadataCache::il2cpp_plugin_init()
-{
-    bool ret_val = false;
-
-    do 
-    {
-        void* plugin_module = 0;
-#if SHIELDCODE
-        plugin_module = (void*)LoadLibrary(_T("UnityPlugin.dll"));
-        if (plugin_module != 0) 
-        {
-            g_query_callback = (def_query_call_back)GetProcAddress((HMODULE)plugin_module, "query_call_back");
-        }
-#endif
-    
-#if IL2CPP_TARGET_ANDROID
-        plugin_module = dlopen("libUnityPlugin.so", RTLD_LAZY);
-        if (plugin_module != 0) 
-        {
-            g_query_callback = (def_query_call_back)dlsym(plugin_module, "query_call_back");
-        }
-#endif
-
-#if SHIELDCODE
-        std::string plugin_path = utils::PathUtils::Combine(os::Path::GetFrameworksPath(), utils::StringView<char>("libUnityPlugin.dylib"));
-        if (plugin_path.empty())
-        {
-            break;
-        }
-
-        plugin_module = dlopen(plugin_path.c_str(), RTLD_LAZY);
-        if (plugin_module != 0) 
-        {
-            g_query_callback = (def_query_call_back)dlsym(plugin_module, "query_call_back");
-        }
-#endif
-
-#if SHIELDCODE
-        g_query_callback = query_call_back;
-#endif
-        if (g_query_callback == 0) 
-        {
-            break;
-        }
-        g_get_global_metadata = (def_il2cpp_get_global_metadata)g_query_callback(IL2CPP_GET_GLOBAL_METADATA);
-        g_get_string = (def_il2cpp_get_string)g_query_callback(IL2CPP_GET_STRING);
-        if (g_get_global_metadata == 0 || g_get_string == 0)
-        {
-            break;
-        }
-
-        ret_val = true;
-    } while (false);
-
-    return ret_val;
-}
-#endif
-
 bool MetadataCache::Initialize()
 {
-
-#if __ENABLE_UNITY_PLUGIN__
-    if (il2cpp_plugin_init())
-    {
-        char game_dat[] = { 'g', 'a', 'm', 'e', '.', 'd', 'a', 't', '\0' };
-        s_GlobalMetadata = vm::MetadataLoader::LoadMetadataFile(game_dat);
-    }
-    else
-    {
-        s_GlobalMetadata = vm::MetadataLoader::LoadMetadataFile("global-metadata.dat");
-    }
-    if (s_GlobalMetadata==NULL)
-    {
-        s_GlobalMetadata = vm::MetadataLoader::LoadMetadataFile("global-metadata.dat");
-        g_get_string=NULL;
-    }
-#else
     s_GlobalMetadata = vm::MetadataLoader::LoadMetadataFile("global-metadata.dat");
-#endif
-	if (s_GlobalMetadata == NULL)
-		return false;
+    if (s_GlobalMetadata == NULL)
+        return false;
+
     s_GlobalMetadataHeader = (const Il2CppGlobalMetadataHeader*)s_GlobalMetadata;
     IL2CPP_ASSERT(s_GlobalMetadataHeader->sanity == 0xFAB11BAF);
     IL2CPP_ASSERT(s_GlobalMetadataHeader->version == 24);
@@ -334,7 +247,10 @@ bool MetadataCache::Initialize()
 
         assemblyName->name = GetStringFromIndex(assemblyNameDefinition->nameIndex);
         assemblyName->culture = GetStringFromIndex(assemblyNameDefinition->cultureIndex);
-        assemblyName->public_key = (const uint8_t*)GetStringFromIndex(assemblyNameDefinition->publicKeyIndex);
+        assemblyName->hash_value = GetStringFromIndex(assemblyNameDefinition->hashValueIndex);
+        assemblyName->public_key = GetStringFromIndex(assemblyNameDefinition->publicKeyIndex);
+        if (strcmp(assemblyName->public_key, "NULL") == 0)
+            assemblyName->public_key = NULL;
         assemblyName->hash_alg = assemblyNameDefinition->hash_alg;
         assemblyName->hash_len = assemblyNameDefinition->hash_len;
         assemblyName->flags = assemblyNameDefinition->flags;
@@ -614,40 +530,25 @@ const Il2CppGenericInst* MetadataCache::GetGenericInst(const Il2CppType* const* 
     const Il2CppType* const* typesEnd = types + typeCount;
     for (const Il2CppType* const* iter = types; iter != typesEnd; ++iter, ++index)
         inst.type_argv[index] = *iter;
-    {
-        // Acquire lock to check if inst has already been cached.
-        il2cpp::os::FastAutoLock lock(&s_MetadataCache.m_CacheMutex);
-        Il2CppGenericInstSet::const_iterator iter = s_GenericInstSet.find(&inst);
-        if (iter != s_GenericInstSet.end())
-            return *iter;
-    }
 
-    Il2CppGenericInst* newInst = NULL;
-    {
-        il2cpp::os::FastAutoLock lock(&g_MetadataLock);
-        newInst  = (Il2CppGenericInst*)MetadataMalloc(sizeof(Il2CppGenericInst));
-        newInst->type_argc = typeCount;
-        newInst->type_argv = (const Il2CppType**)MetadataMalloc(newInst->type_argc * sizeof(Il2CppType*));
-    }
+    os::FastAutoLock lock(&s_MetadataCache.m_CacheMutex);
+    Il2CppGenericInstSet::const_iterator iter = s_GenericInstSet.find(&inst);
+    if (iter != s_GenericInstSet.end())
+        return *iter;
+
+    Il2CppGenericInst* newInst = (Il2CppGenericInst*)IL2CPP_MALLOC(sizeof(Il2CppGenericInst));
+    newInst->type_argc = typeCount;
+    newInst->type_argv = (const Il2CppType**)IL2CPP_MALLOC(newInst->type_argc * sizeof(Il2CppType*));
 
     index = 0;
     for (const Il2CppType* const* iter = types; iter != typesEnd; ++iter, ++index)
         newInst->type_argv[index] = *iter;
 
-    {
-        // Acquire lock agains to attempt to cache inst.
-        il2cpp::os::FastAutoLock lock(&s_MetadataCache.m_CacheMutex);
-        // Another thread may have already added this inst or we may be the first.
-        // In either case, the iterator returned from 'insert' points to the item
-        // cached within the set. We can always return this. In the case of another
-        // thread beating us, the only downside is an extra allocation in the
-        // metadata memory pool that lives for life of process anyway.
-        std::pair<Il2CppGenericInstSet::const_iterator, bool> result = s_GenericInstSet.insert(newInst);
-        if (result.second)
-            ++il2cpp_runtime_stats.generic_instance_count;
+    s_GenericInstSet.insert(newInst);
 
-        return *(result.first);
-    }
+    ++il2cpp_runtime_stats.generic_instance_count;
+
+    return newInst;
 }
 
 const Il2CppGenericInst* MetadataCache::GetGenericInst(const Il2CppTypeVector& types)
@@ -827,7 +728,7 @@ Il2CppMethodPointer MetadataCache::GetMethodPointer(const MethodInfo* methodDefi
     return NULL;
 }
 
-Il2CppClass* MetadataCache::GetTypeInfoFromTypeIndex(TypeIndex index, bool throwOnError)
+Il2CppClass* MetadataCache::GetTypeInfoFromTypeIndex(TypeIndex index)
 {
     if (index == kTypeIndexInvalid)
         return NULL;
@@ -838,12 +739,9 @@ Il2CppClass* MetadataCache::GetTypeInfoFromTypeIndex(TypeIndex index, bool throw
         return s_TypeInfoTable[index];
 
     const Il2CppType* type = s_Il2CppMetadataRegistration->types[index];
-    Il2CppClass *klass = il2cpp::vm::Class::FromIl2CppType(type, throwOnError);
-    if (klass)
-    {
-        Class::InitFromCodegen(klass);
-        s_TypeInfoTable[index] = klass;
-    }
+    Il2CppClass *klass = il2cpp::vm::Class::FromIl2CppType(type);
+    Class::InitFromCodegen(klass);
+    s_TypeInfoTable[index] = klass;
 
     return s_TypeInfoTable[index];
 }
@@ -1571,13 +1469,6 @@ const char* MetadataCache::GetStringFromIndex(StringIndex index)
 {
     IL2CPP_ASSERT(index <= s_GlobalMetadataHeader->stringCount);
     const char* strings = ((const char*)s_GlobalMetadata + s_GlobalMetadataHeader->stringOffset) + index;
-
-#if __ENABLE_UNITY_PLUGIN__
-    if (g_get_string != NULL)
-    {
-        g_get_string((char*)strings, index);
-    }
-#endif // __ENABLE_UNITY_PLUGIN__
     return strings;
 }
 
@@ -1605,7 +1496,7 @@ static bool IsMatchingUsage(Il2CppMetadataUsage usage, const utils::dynamic_arra
     return false;
 }
 
-void MetadataCache::IntializeMethodMetadataRange(uint32_t start, uint32_t count, const utils::dynamic_array<Il2CppMetadataUsage>& expectedUsages, bool throwOnError)
+void MetadataCache::IntializeMethodMetadataRange(uint32_t start, uint32_t count, const utils::dynamic_array<Il2CppMetadataUsage>& expectedUsages)
 {
     for (uint32_t i = 0; i < count; i++)
     {
@@ -1622,7 +1513,7 @@ void MetadataCache::IntializeMethodMetadataRange(uint32_t start, uint32_t count,
             switch (usage)
             {
                 case kIl2CppMetadataUsageTypeInfo:
-                    *s_Il2CppMetadataRegistration->metadataUsages[destinationIndex] = GetTypeInfoFromTypeIndex(decodedIndex, throwOnError);
+                    *s_Il2CppMetadataRegistration->metadataUsages[destinationIndex] = GetTypeInfoFromTypeIndex(decodedIndex);
                     break;
                 case kIl2CppMetadataUsageIl2CppType:
                     *s_Il2CppMetadataRegistration->metadataUsages[destinationIndex] = const_cast<Il2CppType*>(GetIl2CppTypeFromIndex(decodedIndex));
@@ -1651,7 +1542,7 @@ void MetadataCache::InitializeAllMethodMetadata()
     onlyAcceptMethodUsages.push_back(kIl2CppMetadataUsageMethodDef);
     onlyAcceptMethodUsages.push_back(kIl2CppMetadataUsageMethodRef);
     onlyAcceptMethodUsages.push_back(kIl2CppMetadataUsageTypeInfo);
-    IntializeMethodMetadataRange(0, s_GlobalMetadataHeader->metadataUsagePairsCount / sizeof(Il2CppMetadataUsagePair), onlyAcceptMethodUsages, false);
+    IntializeMethodMetadataRange(0, s_GlobalMetadataHeader->metadataUsagePairsCount / sizeof(Il2CppMetadataUsagePair), onlyAcceptMethodUsages);
 }
 
 void MetadataCache::InitializeMethodMetadata(uint32_t index)
@@ -1664,7 +1555,7 @@ void MetadataCache::InitializeMethodMetadata(uint32_t index)
     uint32_t count = metadataUsageLists->count;
 
     utils::dynamic_array<Il2CppMetadataUsage> acceptAllUsages;
-    IntializeMethodMetadataRange(start, count, acceptAllUsages, true);
+    IntializeMethodMetadataRange(start, count, acceptAllUsages);
 }
 
 void MetadataCache::WalkPointerTypes(WalkTypesCallback callback, void* context)

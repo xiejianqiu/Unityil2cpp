@@ -11,18 +11,6 @@
 #include "os/c-api/il2cpp-config-platforms.h"
 #include "os/c-api/il2cpp-config-api-platforms.h"
 
-/*UnityPluing*/
-#ifndef __ENABLE_UNITY_PLUGIN__ 
-#if IL2CPP_TARGET_ANDROID
-#define __ENABLE_UNITY_PLUGIN__ 1
-#else
-#define __ENABLE_UNITY_PLUGIN__ 0
-#endif
-#endif
-
-#if __ENABLE_UNITY_PLUGIN__
-#include "plugin/plugin.h"
-#endif // __ENABLE_UNITY_PLUGIN__
 /* il2cpp-config-api.h need this define */
 #define IL2CPP_COMPILER_MSVC (IL2CPP_TARGET_WINDOWS || IL2CPP_TARGET_XBOXONE)
 
@@ -390,6 +378,8 @@ const int ipv6AddressSize = 16;
 // Android: "There is no support for locales in the C library" https://code.google.com/p/android/issues/detail?id=57313
 // PS4/PS2: strtol_d doesn't exist
 #define IL2CPP_SUPPORT_LOCALE_INDEPENDENT_PARSING (!IL2CPP_TARGET_ANDROID && !IL2CPP_TARGET_PS4 && !IL2CPP_TARGET_PSP2 && !IL2CPP_TARGET_NOVA)
+
+#define NO_UNUSED_WARNING(expr) (void)(expr)
 
 typedef int32_t il2cpp_hresult_t;
 

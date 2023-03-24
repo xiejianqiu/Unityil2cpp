@@ -250,6 +250,11 @@ namespace metadata
                 methodName = method->name + 15;
                 name = StringUtils::Printf("System.Collections.Generic.IList`1.%s", method->name + 15);
             }
+
+            //[WL]
+            Class::Init(implementingInterface);
+            Class::SetupMethods(implementingInterface);
+
             const MethodInfo* matchingInterfacesMethod = NULL;
             for (int methodIndex = 0; methodIndex < implementingInterface->method_count; methodIndex++)
             {
@@ -335,6 +340,10 @@ namespace metadata
     static void SetupArrayVTableAndInterfaceOffsets(Il2CppClass* klass)
     {
         Il2CppClass* arrayClass = Class::GetParent(klass);
+        if (!arrayClass->is_vtable_initialized) {
+            Class::SetupVTable(arrayClass);
+        }
+
         size_t arrayInterfacesCount = arrayClass->interface_offsets_count;
 
         ::std::vector<Il2CppClass*> interfaces;
@@ -392,7 +401,7 @@ namespace metadata
         klass->interfaceOffsets = newInterfaceOffsets;
     }
 
-    void SetupCastClass(Il2CppClass *arrayType)
+    void ArrayMetadata::SetupCastClass(Il2CppClass *arrayType)
     {
         Il2CppClass *elementType = arrayType->element_class;
 

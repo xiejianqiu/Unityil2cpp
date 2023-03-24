@@ -68,6 +68,9 @@ namespace vm
             return;
         }
 
+        //[WL]
+        Class::SetupProperties(genericTypeDefinition);
+
         PropertyInfo* properties = (PropertyInfo*)MetadataCalloc(propertyCount, sizeof(PropertyInfo));
         PropertyInfo* property = properties;
 
@@ -154,16 +157,12 @@ namespace vm
         genericInstanceType->fields = fields;
     }
 
-    Il2CppClass* GenericClass::GetClass(Il2CppGenericClass *gclass, bool throwOnError)
+    Il2CppClass* GenericClass::GetClass(Il2CppGenericClass *gclass)
     {
         FastAutoLock lock(&g_MetadataLock);
         Il2CppClass* definition = GetTypeDefinition(gclass);
         if (definition == NULL)
-        {
-            if (throwOnError)
-                vm::Exception::Raise(vm::Exception::GetMaxmimumNestedGenericsException());
-            return NULL;
-        }
+            vm::Exception::Raise(vm::Exception::GetMaxmimumNestedGenericsException());
 
         if (!gclass->cached_class)
         {

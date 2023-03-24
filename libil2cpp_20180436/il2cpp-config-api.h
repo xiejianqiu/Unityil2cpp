@@ -4,7 +4,6 @@
 #include "os/c-api/il2cpp-config-api-platforms.h"
 #include "il2cpp-api-types.h"
 
-
 // If the platform loads il2cpp as a dynamic library but does not have dlsym (or equivalent) then
 // define IL2CPP_API_DYNAMIC_NO_DLSYM = 1 to add support for api function registration and symbol
 // lookup APIs, see il2cpp-api.cpp

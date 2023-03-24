@@ -29,9 +29,7 @@ namespace vm
     public:
 
         static void Register(const Il2CppCodeRegistration * const codeRegistration, const Il2CppMetadataRegistration * const metadataRegistration, const Il2CppCodeGenOptions* const codeGenOptions);
-#if __ENABLE_UNITY_PLUGIN__
-        static bool il2cpp_plugin_init();
-#endif
+
         static bool Initialize();
         static void InitializeGCSafe();
         static void InitializeAllMethodMetadata();
@@ -57,7 +55,7 @@ namespace vm
         static InvokerMethod GetInvokerMethodPointer(const MethodInfo* methodDefinition, const Il2CppGenericContext* context);
         static Il2CppMethodPointer GetMethodPointer(const MethodInfo* methodDefinition, const Il2CppGenericContext* context);
 
-        static Il2CppClass* GetTypeInfoFromTypeIndex(TypeIndex index, bool throwOnError = true);
+        static Il2CppClass* GetTypeInfoFromTypeIndex(TypeIndex index);
         static const Il2CppType* GetIl2CppTypeFromIndex(TypeIndex index);
         static const MethodInfo* GetMethodInfoFromIndex(EncodedMethodIndex index);
         static const Il2CppGenericMethod* GetGenericMethodFromIndex(GenericMethodIndex index);
@@ -127,7 +125,7 @@ namespace vm
         static void InitializeGenericMethodTable();
         static void InitializeWindowsRuntimeTypeNamesTables();
         static void InitializeGuidToClassTable();
-        static void IntializeMethodMetadataRange(uint32_t start, uint32_t count, const utils::dynamic_array<Il2CppMetadataUsage>& expectedUsages, bool throwOnError);
+        static void IntializeMethodMetadataRange(uint32_t start, uint32_t count, const utils::dynamic_array<Il2CppMetadataUsage>& expectedUsages);
     };
 } // namespace vm
 } // namespace il2cpp

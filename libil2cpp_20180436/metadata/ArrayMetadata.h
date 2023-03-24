@@ -20,6 +20,9 @@ namespace metadata
         // called as part of Class::Init with lock held
         static void SetupArrayInterfaces(Il2CppClass* klass, const il2cpp::os::FastAutoLock& lock);
         static void SetupArrayVTable(Il2CppClass* klass, const il2cpp::os::FastAutoLock& lock);
+
+        //[WL]
+        static void SetupCastClass(Il2CppClass* arrayType);
     };
 } /* namespace vm */
 } /* namespace il2cpp */

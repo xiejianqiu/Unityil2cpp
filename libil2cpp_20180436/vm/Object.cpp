@@ -218,6 +218,9 @@ namespace vm
             }
         }
 
+        //[WL]
+        Class::SetupVTable(obj->klass);
+
         if (Method::IsGenericInstance(method))
         {
             if (method->methodPointer)

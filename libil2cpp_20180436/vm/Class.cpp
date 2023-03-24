@@ -62,9 +62,9 @@ namespace vm
     static void GetBitmapNoInit(Il2CppClass* klass, size_t* bitmap, size_t& maxSetBit, size_t parentOffset);
     static Il2CppClass* ResolveGenericInstanceType(Il2CppClass*, const il2cpp::vm::TypeNameParseInfo&, TypeSearchFlags searchFlags);
     static bool InitLocked(Il2CppClass *klass, const FastAutoLock& lock);
-    static void SetupVTable(Il2CppClass *klass, const FastAutoLock& lock);
+    static void SetupVTableLocked(Il2CppClass *klass, const FastAutoLock& lock);
 
-    Il2CppClass* Class::FromIl2CppType(const Il2CppType* type, bool throwOnError)
+    Il2CppClass* Class::FromIl2CppType(const Il2CppType* type)
     {
 #define RETURN_DEFAULT_TYPE(fieldName) do { IL2CPP_ASSERT(il2cpp_defaults.fieldName); return il2cpp_defaults.fieldName; } while (false)
 
@@ -108,7 +108,7 @@ namespace vm
                 RETURN_DEFAULT_TYPE(typed_reference_class);
             case IL2CPP_TYPE_ARRAY:
             {
-                Il2CppClass* elementClass = FromIl2CppType(type->data.array->etype, throwOnError);
+                Il2CppClass* elementClass = FromIl2CppType(type->data.array->etype);
                 return Class::GetBoundedArrayClass(elementClass, type->data.array->rank, true);
             }
             case IL2CPP_TYPE_PTR:
@@ -118,14 +118,14 @@ namespace vm
                 return NULL; //mono_fnptr_class_get (type->data.method);
             case IL2CPP_TYPE_SZARRAY:
             {
-                Il2CppClass* elementClass = FromIl2CppType(type->data.type, throwOnError);
+                Il2CppClass* elementClass = FromIl2CppType(type->data.type);
                 return Class::GetArrayClass(elementClass, 1);
             }
             case IL2CPP_TYPE_CLASS:
             case IL2CPP_TYPE_VALUETYPE:
                 return Type::GetClass(type);
             case IL2CPP_TYPE_GENERICINST:
-                return GenericClass::GetClass(type->data.generic_class, throwOnError);
+                return GenericClass::GetClass(type->data.generic_class);
             case IL2CPP_TYPE_VAR:
                 return Class::FromGenericParameter(Type::GetGenericParameter(type));
             case IL2CPP_TYPE_MVAR:
@@ -356,6 +356,9 @@ namespace vm
         if (!klass->has_finalize)
             return NULL;
 
+        //[WL]
+        Class::SetupVTable(klass);
+
         return klass->vtable[s_FinalizerSlot].method;
     }
 
@@ -572,8 +575,11 @@ namespace vm
 
     bool Class::HasParent(Il2CppClass *klass, Il2CppClass *parent)
     {
-        Class::SetupTypeHierarchy(klass);
-        Class::SetupTypeHierarchy(parent);
+        //[WL]
+        if (klass->typeHierarchy == NULL)
+            Class::SetupTypeHierarchy(klass);
+        if (parent->typeHierarchy == NULL)
+            Class::SetupTypeHierarchy(parent);
 
         return HasParentUnsafe(klass, parent);
     }
@@ -595,6 +601,17 @@ namespace vm
             {
                 if (oklass->rank != klass->rank)
                     return false;
+                //[WL] init castClass
+                {
+                    il2cpp::os::FastAutoLock lock(&g_MetadataLock);
+
+                    if (!klass->castClass) {
+                        il2cpp::metadata::ArrayMetadata::SetupCastClass(klass);
+                    }
+                    if (!oklass->castClass) {
+                        il2cpp::metadata::ArrayMetadata::SetupCastClass(oklass);
+                    }
+                }
 
                 if (oklass->castClass->valuetype)
                 {
@@ -629,8 +646,8 @@ namespace vm
                     return true;
             }
 #endif
-
-            return HasParentUnsafe(oklass, klass);
+            //[WL]
+            return HasParent(oklass, klass);
         }
 
 #if NET_4_0
@@ -643,6 +660,11 @@ namespace vm
 
             for (Il2CppClass* iter = oklass; iter != NULL; iter = iter->parent)
             {
+                //[WL]
+                if (iter->interfaces_count > 0 && iter->implementedInterfaces == NULL) {
+                    Class::SetupInterfaces(iter);
+                }
+
                 if (IsGenericClassAssignableFrom(klass, iter, genericContainer))
                     return true;
 
@@ -651,6 +673,10 @@ namespace vm
                     if (IsGenericClassAssignableFrom(klass, iter->implementedInterfaces[i], genericContainer))
                         return true;
                 }
+
+                //[WL]
+                if (!iter->is_vtable_initialized)
+                    Class::SetupVTable(iter);
 
                 for (uint16_t i = 0; i < iter->interface_offsets_count; ++i)
                 {
@@ -664,11 +690,20 @@ namespace vm
         {
             for (Il2CppClass* iter = oklass; iter != NULL; iter = iter->parent)
             {
+                //[WL]
+                if (iter->interfaces_count > 0 && iter->implementedInterfaces == NULL) {
+                    Class::SetupInterfaces(iter);
+                }
+
                 for (uint16_t i = 0; i < iter->interfaces_count; ++i)
                 {
                     if (iter->implementedInterfaces[i] == klass)
                         return true;
                 }
+
+                //[WL]
+                if (!iter->is_vtable_initialized)
+                    Class::SetupVTable(iter);
 
                 // Check the interfaces we may have grafted on to the type (e.g IList,
                 // ICollection, IEnumerable for array types).
@@ -1053,7 +1088,7 @@ namespace vm
         else if (klass->rank)
         {
             InitLocked(klass->element_class, lock);
-            SetupVTable(klass, lock);
+            SetupVTableLocked(klass, lock);
         }
         else
         {
@@ -1147,7 +1182,16 @@ namespace vm
         }
     }
 
-    static void SetupVTable(Il2CppClass *klass, const FastAutoLock& lock)
+    void Class::SetupVTable(Il2CppClass* klass)
+    {
+        if (!klass->is_vtable_initialized)
+        {
+            il2cpp::os::FastAutoLock lock(&g_MetadataLock);
+            SetupVTableLocked(klass, lock);
+        }
+    }
+
+    static void SetupVTableLocked(Il2CppClass *klass, const FastAutoLock& lock)
     {
         if (klass->is_vtable_initialized)
             return;
@@ -1412,27 +1456,31 @@ namespace vm
             if (!element_class->initialized)
                 InitLocked(element_class, lock);
         }
-
-        SetupInterfacesLocked(klass, lock);
+        //[WL]
+        //SetupInterfacesLocked(klass, lock);
 
         if (klass->parent && !klass->parent->initialized)
             InitLocked(klass->parent, lock);
 
-        SetupMethodsLocked(klass, lock);
-        SetupTypeHierarchyLocked(klass, lock);
-        SetupVTable(klass, lock);
+        //[WL]
+        //SetupMethodsLocked(klass, lock);
+        //SetupTypeHierarchyLocked(klass, lock);
+        //SetupVTableLocked(klass, lock);
         if (!klass->size_inited)
             SetupFieldsLocked(klass, lock);
 
         if (klass->has_initialization_error)
             return false;
 
-        SetupEventsLocked(klass, lock);
-        SetupPropertiesLocked(klass, lock);
+        //SetupEventsLocked(klass, lock);
+        //SetupPropertiesLocked(klass, lock);
         SetupNestedTypesLocked(klass, lock);
 
         if (klass == il2cpp_defaults.object_class)
         {
+            //[WL] need load VTable for object_class
+            SetupVTableLocked(klass, lock);
+
             for (uint16_t slot = 0; slot < klass->vtable_count; slot++)
             {
                 const MethodInfo* vmethod = klass->vtable[slot].method;
@@ -1889,14 +1937,14 @@ namespace vm
                     case IL2CPP_TYPE_ARRAY:
                     case IL2CPP_TYPE_VAR:
                     case IL2CPP_TYPE_MVAR:
-                        IL2CPP_ASSERT(0 == (offset % sizeof(void*)));
+                        IL2CPP_ASSERT(0 == (field->offset % sizeof(void*)));
                         set_bit(bitmap, offset / sizeof(void*));
                         maxSetBit = std::max(maxSetBit, offset / sizeof(void*));
                         break;
                     case IL2CPP_TYPE_GENERICINST:
                         if (!Type::GenericInstIsValuetype(type))
                         {
-                            IL2CPP_ASSERT(0 == (offset % sizeof(void*)));
+                            IL2CPP_ASSERT(0 == (field->offset % sizeof(void*)));
                             set_bit(bitmap, offset / sizeof(void*));
                             maxSetBit = std::max(maxSetBit, offset / sizeof(void*));
                             break;
@@ -2145,6 +2193,16 @@ namespace vm
 
         RaiseExceptionForNotFoundInterface(klass, itf, slot);
         IL2CPP_UNREACHABLE;
+    }
+
+    const VirtualInvokeData& Class::GetVirtualInvokeData(Il2CppMethodSlot slot, const Il2CppObject* obj)
+    {
+        Assert(slot != kInvalidIl2CppMethodSlot && "MethodSlot is invalid!");
+        Il2CppClass* klass = obj->klass;
+
+        Class::SetupVTable(klass);
+
+        return klass->vtable[slot];
     }
 } /* namespace vm */
 } /* namespace il2cpp */
