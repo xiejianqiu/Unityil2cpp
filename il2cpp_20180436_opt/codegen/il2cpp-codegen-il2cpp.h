@@ -400,7 +400,7 @@ FORCE_INLINE const RuntimeMethod* il2cpp_codegen_get_generic_virtual_method(cons
     uint16_t slot = method->slot;
     //const RuntimeMethod* methodDefinition = obj->klass->vtable[slot].method;
     //[WL]
-    const RuntimeMethod* methodDefinition = nullptr;
+    const RuntimeMethod* methodDefinition = NULL;
     if (obj->klass->is_vtable_initialized && obj->klass->vtable) {
         methodDefinition = obj->klass->vtable[slot].method;
     }
